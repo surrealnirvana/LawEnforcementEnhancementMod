@@ -57,8 +57,7 @@ After first launch, a configuration file will be created at:
 - **9 PM Maximum Protocol**: When the in-game time reaches 9:00 PM, the mod will automatically spawn officers up to the maximum allowed limit and maintain this count until the next day.
 
 ## Compatibility
-- Compatible with game version [Game Version]
-- Requires MelonLoader version [MelonLoader Version]
+- Requires MelonLoader
 - Not compatible with other police behavior mods unless specifically designed for integration
 
 ## Known Issues
