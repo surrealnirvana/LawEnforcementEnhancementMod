@@ -1,7 +1,7 @@
-# Law Enforcement Enhancement Mod
+#Enhanced Law Enforcement 
 
 ## Overview
-Law Enforcement Enhancement Mod is a comprehensive modification for enhancing police officer behavior, spawning, and management in the game. This mod overhauls the default police system with improved AI, patrol routes, and dynamic officer spawning mechanics based on time of day and player location.
+Enhanced Law Enforcement is a comprehensive modification for enhancing police officer behavior, spawning, and management in the game. This mod additional a greater police presence, creates new patrol routes, and has dynamic officer spawning mechanics based on time of day and player location.
 
 ## Features
 
@@ -10,7 +10,7 @@ Law Enforcement Enhancement Mod is a comprehensive modification for enhancing po
   - Morning (6:00 AM - 12:00 PM): 33% of max capacity
   - Afternoon (12:00 PM - 6:00 PM): 50% of max capacity
   - Evening (6:00 PM - 9:00 PM): 66% of max capacity
-  - Night (12:00 AM - 6:00 AM): 100% of max capacity
+  - Night (9:00 PM - 4:00 AM): 100% of max capacity
   - 9:00 PM Maximum Protocol: Automatically spawns officers to reach maximum capacity
 
 - **Proximity-based Spawning**: Ensures a minimum number of officers around the player at all times
@@ -43,7 +43,7 @@ After first launch, a configuration file will be created at:
 ### Main Configuration Options
 - `MaxTotalOfficers`: Maximum number of officers allowed in the game (default: 30)
 - `MinOfficersAroundPlayer`: Minimum officers to maintain within proximity to player (default: 20)
-- `OfficerRemovalRadius`: Distance from player at which officers can be replaced (default: 100m)
+- `OfficerRemovalRadius`: Distance from player at which officers can be replaced (default: 100m)- scale with OfficerDespawnRadius less odd things happen
 - `OfficerDespawnRadius`: Distance from player at which officers are despawned (default: 200m)
 - `PlayerProximityRadius`: Radius around player to check for officers (default: 150m)
 
@@ -72,3 +72,4 @@ After first launch, a configuration file will be created at:
 ---
 
 For bug reports, feature requests, or other inquiries, please open an issue on the project repository.
+https://github.com/surrealnirvana/LawEnforcementEnhancementMod
