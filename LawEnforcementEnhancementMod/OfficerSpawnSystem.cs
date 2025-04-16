@@ -64,25 +64,27 @@ namespace LawEnforcementEnhancementMod
         private bool _initialized;
         private bool _gameFullyLoaded = false;
 
-        // Increased cooldowns for better performance
-        private float _spawnCooldown = 7f; // Spawn one officer every 7 seconds
+        // UPDATED DEFAULT VALUES per feedback
+        private float _spawnCooldown = 3.5f; // Spawn one officer every 3.5 seconds
         private float _nextSpawnTime = 0f;
         private float _despawnCooldown = 10f; // Despawn one officer every 10 seconds
         private float _nextDespawnTime = 0f;
 
-        // Officer limits - more reasonable defaults
-        private int _maxTotalOfficers = 15;
-        private int _officersPerDistrict = 5;
+        // Officer limits - updated defaults
+        private int _maxTotalOfficers = 60;
+        private int _officersPerDistrict = 10;
 
         // New limit for officers close to the player
         private float _localOfficerRadius = 100f; // Consider officers within 100m of player "local"
-        private int _maxLocalOfficers = 15; // Maximum officers near player
+        private int _maxLocalOfficers = 30; // Maximum officers near player (updated)
 
         // Districts maintenance interval
         private float _normalDistrictMaintenanceInterval = 30f;  // Normal interval (30 seconds)
         private float _reducedDistrictMaintenanceInterval = 300f; // Reduced interval (5 minutes)
         private float _districtMaintenanceInterval = 30f; // Will be set in Initialize()
         private float _lastDistrictMaintenanceTime = 0f;
+        private float _lastReconciliationTime = 0f;  // NEW: For tracking when we last reconciled officer counts
+        private float _reconciliationInterval = 15f; // NEW: Reconcile every 15 seconds
 
         // District report tracking
         private bool _hasLoggedDistrictNeeds = false;
@@ -104,6 +106,13 @@ namespace LawEnforcementEnhancementMod
         private readonly Queue<SpawnJob> _spawnQueue = new Queue<SpawnJob>();
         private readonly Queue<PoliceOfficer> _despawnQueue = new Queue<PoliceOfficer>();
 
+        // NEW: Stuck officer detection
+        private Dictionary<PoliceOfficer, Vector3> _lastOfficerPositions = new Dictionary<PoliceOfficer, Vector3>();
+        private Dictionary<PoliceOfficer, int> _officerStuckCounter = new Dictionary<PoliceOfficer, int>();
+        private float _lastStuckCheckTime = 0f;
+        private float _stuckCheckInterval = 10f; // Check for stuck officers every 10 seconds
+        private const int STUCK_THRESHOLD = 3; // Number of consecutive checks before considering an officer stuck
+
         // 9PM Settings
         private bool _isNinePMMaxSpawnTriggered = false;
         private float _lastNinePMCheckTime = 0f;
@@ -113,11 +122,11 @@ namespace LawEnforcementEnhancementMod
         // District management
         private readonly List<District> _districts = new List<District>();
 
-        // Time-based officer count limits (more reasonable defaults)
-        private int _morningOfficerLimit = 10;  // 6:00 AM - 12:00 PM (50% of max)
-        private int _afternoonOfficerLimit = 12; // 12:00 PM - 6:00 PM (75% of max)
-        private int _eveningOfficerLimit = 15;  // 6:00 PM - 9:00 PM (90% of max)
-        private int _nightOfficerLimit = 15;    // 9:00 PM - 6:00 AM (100% of max)
+        // Time-based officer count limits (updated defaults)
+        private int _morningOfficerLimit = 10;   // 6:00 AM - 12:00 PM
+        private int _afternoonOfficerLimit = 15; // 12:00 PM - 6:00 PM
+        private int _eveningOfficerLimit = 30;   // 6:00 PM - 9:00 PM 
+        private int _nightOfficerLimit = 60;     // 9:00 PM - 6:00 AM
 
         // Config file path
         private readonly string _configFilePath;
@@ -132,11 +141,12 @@ namespace LawEnforcementEnhancementMod
         // District transitions
         private int _districtTransitionBuffer = 2; // Extra officers to spawn in new district
 
-        // Patrol settings
-        private float _minPatrolRadius = 10f;
-        private float _maxPatrolRadius = 20f;
-        private int _minWaypoints = 3;
-        private int _maxWaypoints = 5;
+        // Patrol settings - updated defaults
+        private float _minPatrolRadius = 20f;
+        private float _maxPatrolRadius = 40f;
+        private int _minWaypoints = 5;
+        private int _maxWaypoints = 8;
+        private float _waypointHeightOffset = 0.2f; // Small Y offset to avoid ground clipping
 
         // Baseline officers - spawn these first in every district
         private bool _populateAllDistrictsOnStartup = true;
@@ -170,6 +180,16 @@ namespace LawEnforcementEnhancementMod
 
         // Add a reference counter to help with memory cleanup
         private Dictionary<string, GameObject> _patrolRouteObjects = new Dictionary<string, GameObject>();
+
+        // NEW: Add patrol pattern types for variety
+        private enum PatrolPatternType
+        {
+            Circle,
+            Grid,
+            Zigzag,
+            Star,
+            Random
+        }
 
         // Officer pooling class
         private class PooledOfficer
@@ -212,34 +232,34 @@ namespace LawEnforcementEnhancementMod
 
         public class SpawnSystemConfig
         {
-            // Added all configurable parameters here
-            public int MaxTotalOfficers { get; set; } = 15;
-            public int OfficersPerDistrict { get; set; } = 5;
-            public float SpawnCooldown { get; set; } = 7f;
+            // Added all configurable parameters here with UPDATED defaults
+            public int MaxTotalOfficers { get; set; } = 60;
+            public int OfficersPerDistrict { get; set; } = 10;
+            public float SpawnCooldown { get; set; } = 3.5f;
             public float DespawnCooldown { get; set; } = 10f;
             public float PlayerCheckInterval { get; set; } = 5f;
             public float DistrictTransitionCooldown { get; set; } = 15f;
             public bool PreserveDistrictOfficers { get; set; } = true;
             public int MaxSpawnsPerCycle { get; set; } = 1;
             public int MaxDespawnsPerCycle { get; set; } = 1;
-            public int MaxLocalOfficers { get; set; } = 15;
+            public int MaxLocalOfficers { get; set; } = 30;
             public float LocalOfficerRadius { get; set; } = 100f;
             public float NormalDistrictMaintenanceInterval { get; set; } = 30f;
             public float ReducedDistrictMaintenanceInterval { get; set; } = 300f;
             public int DistrictTransitionBuffer { get; set; } = 2;
-            public float MinPatrolRadius { get; set; } = 10f;
-            public float MaxPatrolRadius { get; set; } = 20f;
-            public int MinPatrolWaypoints { get; set; } = 3;
-            public int MaxPatrolWaypoints { get; set; } = 5;
+            public float MinPatrolRadius { get; set; } = 20f;
+            public float MaxPatrolRadius { get; set; } = 40f;
+            public int MinPatrolWaypoints { get; set; } = 5;
+            public int MaxPatrolWaypoints { get; set; } = 8;
             public bool PopulateAllDistrictsOnStartup { get; set; } = true;
             public bool PreloadAllDistrictOfficers { get; set; } = false;
             public float DelayBeforeSpawning { get; set; } = 10f;
 
             // Time-based officer count limits
             public int MorningOfficerLimit { get; set; } = 10;
-            public int AfternoonOfficerLimit { get; set; } = 12;
-            public int EveningOfficerLimit { get; set; } = 15;
-            public int NightOfficerLimit { get; set; } = 15;
+            public int AfternoonOfficerLimit { get; set; } = 15;
+            public int EveningOfficerLimit { get; set; } = 30;
+            public int NightOfficerLimit { get; set; } = 60;
         }
 
         public OfficerSpawnSystem()
@@ -540,6 +560,8 @@ namespace LawEnforcementEnhancementMod
             _lastNinePMCheckTime = Time.time;
             _lastDistrictTransitionTime = Time.time;
             _lastDistrictMaintenanceTime = Time.time;
+            _lastReconciliationTime = Time.time; // NEW: Initialize reconciliation timer
+            _lastStuckCheckTime = Time.time;     // NEW: Initialize stuck check timer
             _lastFullDistrictCheckTime = DateTime.Now;
             _lastLogDisplayTime = DateTime.Now;
             _initialized = true;
@@ -714,6 +736,20 @@ namespace LawEnforcementEnhancementMod
                         CheckPlayerDistrict();
                     }
 
+                    // NEW: Reconcile district officer counts periodically to handle officers despawned by the game
+                    if (currentTime - _lastReconciliationTime >= _reconciliationInterval)
+                    {
+                        _lastReconciliationTime = currentTime;
+                        ReconcileDistrictOfficers();
+                    }
+
+                    // NEW: Check for stuck officers periodically
+                    if (currentTime - _lastStuckCheckTime >= _stuckCheckInterval)
+                    {
+                        _lastStuckCheckTime = currentTime;
+                        CheckForStuckOfficers();
+                    }
+
                     // Periodically ensure all districts have target officers - HIGHER PRIORITY
                     // Only process on certain frames for better performance
                     if (_frameCounter % MAINTENANCE_FRAME_INTERVAL == 0 &&
@@ -770,6 +806,235 @@ namespace LawEnforcementEnhancementMod
             {
                 _core.LoggerInstance.Error($"Critical error in Update: {ex.Message}\n{ex.StackTrace}");
             }
+        }
+
+        // NEW: Reconcile district officers to fix counts when officers are despawned by the game
+        private void ReconcileDistrictOfficers()
+        {
+            int officersRemoved = 0;
+
+            // Validate all district officers
+            foreach (var district in _districts)
+            {
+                for (int i = district.OfficersSpawned.Count - 1; i >= 0; i--)
+                {
+                    var officer = district.OfficersSpawned[i];
+                    // Check if the officer has been despawned by the game
+                    if (officer == null || officer.gameObject == null || !officer.gameObject.activeInHierarchy)
+                    {
+                        district.OfficersSpawned.RemoveAt(i);
+                        officersRemoved++;
+
+                        // Adjust district officer count
+                        if (!_districtsFullyPopulated)
+                        {
+                            _districtOfficerCount = Math.Max(0, _districtOfficerCount - 1);
+                        }
+                    }
+                }
+            }
+
+            // Only log if we found and removed invalid officers
+            if (officersRemoved > 0)
+            {
+                _core.LoggerInstance.Msg($"Reconciliation found and removed {officersRemoved} despawned officers from district counts");
+
+                // If any were removed, it might be worth checking active officers list too
+                CleanupInvalidOfficers();
+
+                // Trigger a verification check to refill any understaffed districts
+                if (_populationState == DistrictPopulationState.MaintenanceMode && officersRemoved > 5)
+                {
+                    _populationState = DistrictPopulationState.InitialCheck;
+                    _needsStatusUpdate = true;
+                    _core.LoggerInstance.Msg("Significant officer loss detected. Restarting district population process.");
+                }
+            }
+        }
+
+        // NEW: Check for stuck officers and attempt to fix them
+        private void CheckForStuckOfficers()
+        {
+            int fixedCount = 0;
+            var officersToCheck = new List<PoliceOfficer>(_activeOfficers);
+
+            foreach (var officer in officersToCheck)
+            {
+                if (officer == null || officer.gameObject == null) continue;
+
+                Vector3 currentPosition = officer.transform.position;
+
+                // If this is our first check for this officer
+                if (!_lastOfficerPositions.ContainsKey(officer))
+                {
+                    _lastOfficerPositions[officer] = currentPosition;
+                    _officerStuckCounter[officer] = 0;
+                    continue;
+                }
+
+                // Check if officer has moved
+                Vector3 lastPosition = _lastOfficerPositions[officer];
+                float moveDistance = Vector3.Distance(lastPosition, currentPosition);
+
+                // If officer hasn't moved much, increment counter
+                if (moveDistance < 0.1f)
+                {
+                    _officerStuckCounter[officer] = _officerStuckCounter.ContainsKey(officer) ?
+                        _officerStuckCounter[officer] + 1 : 1;
+                }
+                else
+                {
+                    // Reset counter if officer moved
+                    _officerStuckCounter[officer] = 0;
+                }
+
+                // Update last position
+                _lastOfficerPositions[officer] = currentPosition;
+
+                // If officer is stuck for multiple checks, try to fix
+                if (_officerStuckCounter.ContainsKey(officer) && _officerStuckCounter[officer] >= STUCK_THRESHOLD)
+                {
+                    // Try to fix the officer
+                    if (FixStuckOfficer(officer))
+                    {
+                        fixedCount++;
+                    }
+
+                    // Reset counter
+                    _officerStuckCounter[officer] = 0;
+                }
+            }
+
+            // Clean up tracking for officers that no longer exist
+            var officersToRemove = new List<PoliceOfficer>();
+            foreach (var officer in _lastOfficerPositions.Keys)
+            {
+                if (officer == null || officer.gameObject == null || !officer.gameObject.activeInHierarchy)
+                {
+                    officersToRemove.Add(officer);
+                }
+            }
+
+            foreach (var officer in officersToRemove)
+            {
+                _lastOfficerPositions.Remove(officer);
+                _officerStuckCounter.Remove(officer);
+            }
+
+            if (fixedCount > 0)
+            {
+                _core.LoggerInstance.Msg($"Fixed {fixedCount} stuck officers");
+            }
+        }
+
+        // NEW: Try to fix a stuck officer
+        private bool FixStuckOfficer(PoliceOfficer officer)
+        {
+            try
+            {
+                if (officer == null || officer.gameObject == null) return false;
+
+                // Get the movement component and agent
+                var movement = officer.Movement;
+                if (movement == null) return false;
+
+                var agent = movement.Agent;
+                if (agent == null) return false;
+
+                // Get current position
+                Vector3 currentPos = officer.transform.position;
+
+                // Try to find a valid NavMesh position within 10m
+                NavMeshHit hit;
+                if (NavMesh.SamplePosition(currentPos, out hit, 10f, NavMesh.AllAreas))
+                {
+                    // Try to warp the agent to the valid position
+                    SafeInvokeMethod(agent, "Warp", new object[] { hit.position });
+
+                    // Reset patrol route
+                    string routeName = null;
+                    if (_officerRouteNames.TryGetValue(officer, out routeName))
+                    {
+                        GameObject routeGO = null;
+                        if (_patrolRouteObjects.TryGetValue(routeName, out routeGO) && routeGO != null)
+                        {
+                            var route = routeGO.GetComponent<FootPatrolRoute>();
+                            if (route != null)
+                            {
+                                var patrolGroup = new PatrolGroup(route);
+                                officer.StartFootPatrol(patrolGroup, true);
+                            }
+                        }
+                    }
+
+                    return true;
+                }
+
+                // If we couldn't find a valid position, queue officer for despawn and respawn
+                District officerDistrict = null;
+                foreach (var district in _districts)
+                {
+                    if (district.OfficersSpawned.Contains(officer))
+                    {
+                        officerDistrict = district;
+                        break;
+                    }
+                }
+
+                // Despawn and request a replacement
+                if (officerDistrict != null)
+                {
+                    QueueDespawn(officer);
+                    QueueSpawnInDistrict(officerDistrict, 2.0f);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _core.LoggerInstance.Error($"Error fixing stuck officer: {ex.Message}");
+            }
+            return false;
+        }
+
+        // Helper methods for safe property access using reflection
+        private void SafeSetProperty(object obj, string propertyName, object value)
+        {
+            try
+            {
+                var prop = obj.GetType().GetProperty(propertyName);
+                if (prop != null && prop.CanWrite)
+                {
+                    prop.SetValue(obj, value);
+                }
+            }
+            catch { }
+        }
+
+        private T SafeGetProperty<T>(object obj, string propertyName, T defaultValue)
+        {
+            try
+            {
+                var prop = obj.GetType().GetProperty(propertyName);
+                if (prop != null && prop.CanRead)
+                {
+                    return (T)prop.GetValue(obj);
+                }
+            }
+            catch { }
+            return defaultValue;
+        }
+
+        private void SafeInvokeMethod(object obj, string methodName, object[] args)
+        {
+            try
+            {
+                var method = obj.GetType().GetMethod(methodName);
+                if (method != null)
+                {
+                    method.Invoke(obj, args);
+                }
+            }
+            catch { }
         }
 
         // New method to immediately spawn all district officers during loading
@@ -1464,14 +1729,17 @@ namespace LawEnforcementEnhancementMod
                     route.RouteName = routeName;
                     route.StartWaypointIndex = 0;
 
-                    // Create multiple waypoints in a patrol pattern
-                    CreatePatrolWaypoints(routeGO, position);
+                    // IMPROVED: Create enhanced patrol waypoints with better patterns
+                    CreateEnhancedPatrolWaypoints(routeGO, position);
 
                     // Create patrol group
                     var patrolGroup = new PatrolGroup(route);
 
                     // Store the route name with this officer
                     _officerRouteNames[pooledOfficer] = routeName;
+
+                    // NEW: Enhance NavMeshAgent properties for better movement
+                    EnhanceOfficerNavigation(pooledOfficer);
 
                     // Reactivate officer and start patrol
                     pooledOfficer.Activate();
@@ -1539,8 +1807,8 @@ namespace LawEnforcementEnhancementMod
                 patrolRoute.RouteName = patrolName;
                 patrolRoute.StartWaypointIndex = 0;
 
-                // Create multiple waypoints in a patrol pattern
-                CreatePatrolWaypoints(patrolRouteGO, position);
+                // IMPROVED: Create enhanced patrol waypoints
+                CreateEnhancedPatrolWaypoints(patrolRouteGO, position);
 
                 // Create patrol group
                 var newPatrolGroup = new PatrolGroup(patrolRoute);
@@ -1566,6 +1834,9 @@ namespace LawEnforcementEnhancementMod
 
                 // Store the route name with this officer
                 _officerRouteNames[spawnedOfficer] = patrolName;
+
+                // NEW: Enhance NavMeshAgent properties before patrolling
+                EnhanceOfficerNavigation(spawnedOfficer);
 
                 // Start patrol
                 spawnedOfficer.StartFootPatrol(newPatrolGroup, true);
@@ -1605,11 +1876,55 @@ namespace LawEnforcementEnhancementMod
             }
         }
 
-        private void CreatePatrolWaypoints(GameObject routeGO, Vector3 centerPos)
+        // NEW: Method to enhance officer navigation properties safely using reflection
+        private void EnhanceOfficerNavigation(PoliceOfficer officer)
+        {
+            if (officer == null) return;
+
+            try
+            {
+                // Get the officer's movement component
+                var movement = officer.Movement;
+                if (movement == null) return;
+
+                // Get the NavMeshAgent
+                var agent = movement.Agent;
+                if (agent == null) return;
+
+                // Set properties safely using reflection
+                SafeSetProperty(agent, "speed", 3.5f); // Slightly faster movement
+                SafeSetProperty(agent, "acceleration", 12f); // Better acceleration
+                SafeSetProperty(agent, "angularSpeed", 180f); // Better turning
+                SafeSetProperty(agent, "stoppingDistance", 0.5f); // Stop closer to destination
+                SafeSetProperty(agent, "obstacleAvoidanceType", 1); // Quality level for obstacle avoidance
+
+                // Try to warp to valid position if not on NavMesh
+                NavMeshHit hit;
+                bool isOnNavMesh = SafeGetProperty<bool>(agent, "isOnNavMesh", true);
+
+                if (!isOnNavMesh)
+                {
+                    if (NavMesh.SamplePosition(officer.transform.position, out hit, 5f, NavMesh.AllAreas))
+                    {
+                        SafeInvokeMethod(agent, "Warp", new object[] { hit.position });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _core.LoggerInstance.Error($"Error enhancing officer navigation: {ex.Message}");
+            }
+        }
+
+        // IMPROVED: Enhanced waypoint creation for more realistic patrols
+        private void CreateEnhancedPatrolWaypoints(GameObject routeGO, Vector3 centerPos)
         {
             try
             {
-                // Create 3-5 waypoints in a small area around the spawn position
+                // Choose a random patrol pattern
+                PatrolPatternType patternType = (PatrolPatternType)UnityEngine.Random.Range(0, 5);
+
+                // Create waypoints based on the pattern
                 int waypointCount = UnityEngine.Random.Range(_minWaypoints, _maxWaypoints + 1);
                 float patrolRadius = UnityEngine.Random.Range(_minPatrolRadius, _maxPatrolRadius);
 
@@ -1621,35 +1936,29 @@ namespace LawEnforcementEnhancementMod
                 centerWaypointGO.transform.SetParent(routeGO.transform);
                 waypoints.Add(centerWaypointGO.transform);
 
-                // Add waypoints in a circle
-                for (int i = 1; i < waypointCount; i++)
+                // Generate waypoints based on pattern type
+                switch (patternType)
                 {
-                    float angle = i * (2 * Mathf.PI / (waypointCount - 1)); // Distribute evenly
-                    Vector3 waypointPos = centerPos + new Vector3(
-                        Mathf.Cos(angle) * patrolRadius,
-                        0f,
-                        Mathf.Sin(angle) * patrolRadius
-                    );
+                    case PatrolPatternType.Circle:
+                        GenerateCirclePattern(routeGO, centerPos, patrolRadius, waypointCount, waypoints);
+                        break;
 
-                    // Try to find valid NavMesh position
-                    NavMeshHit hit;
-                    Vector3 finalPosition;
+                    case PatrolPatternType.Grid:
+                        GenerateGridPattern(routeGO, centerPos, patrolRadius, waypointCount, waypoints);
+                        break;
 
-                    if (NavMesh.SamplePosition(waypointPos, out hit, 5f, NavMesh.AllAreas))
-                    {
-                        finalPosition = hit.position;
-                    }
-                    else
-                    {
-                        // If NavMesh sampling fails, use the calculated position with a slight Y adjustment
-                        finalPosition = waypointPos;
-                        finalPosition.y = centerPos.y; // Match the Y coordinate to center
-                    }
+                    case PatrolPatternType.Zigzag:
+                        GenerateZigzagPattern(routeGO, centerPos, patrolRadius, waypointCount, waypoints);
+                        break;
 
-                    var waypointGO = new GameObject($"Waypoint_{i}");
-                    waypointGO.transform.position = finalPosition;
-                    waypointGO.transform.SetParent(routeGO.transform);
-                    waypoints.Add(waypointGO.transform);
+                    case PatrolPatternType.Star:
+                        GenerateStarPattern(routeGO, centerPos, patrolRadius, waypointCount, waypoints);
+                        break;
+
+                    case PatrolPatternType.Random:
+                    default:
+                        GenerateRandomPattern(routeGO, centerPos, patrolRadius, waypointCount, waypoints);
+                        break;
                 }
 
                 // Set up route with all waypoints
@@ -1668,7 +1977,7 @@ namespace LawEnforcementEnhancementMod
             }
             catch (Exception ex)
             {
-                _core.LoggerInstance.Error($"Error creating patrol waypoints: {ex.Message}");
+                _core.LoggerInstance.Error($"Error creating enhanced patrol waypoints: {ex.Message}");
 
                 // Fallback - create at least one waypoint
                 try
@@ -1684,6 +1993,170 @@ namespace LawEnforcementEnhancementMod
                 }
                 catch { }
             }
+        }
+
+        // Generate waypoints in a circle pattern
+        private void GenerateCirclePattern(GameObject routeGO, Vector3 center, float radius, int count, List<Transform> waypoints)
+        {
+            // Start at 1 since we already added the center point
+            for (int i = 1; i < count; i++)
+            {
+                float angle = i * (2 * Mathf.PI / (count - 1)); // Distribute evenly
+                Vector3 waypointPos = center + new Vector3(
+                    Mathf.Cos(angle) * radius,
+                    0,
+                    Mathf.Sin(angle) * radius
+                );
+
+                CreateValidWaypoint(routeGO, waypointPos, i, center.y, waypoints);
+            }
+        }
+
+        // Generate waypoints in a grid pattern
+        private void GenerateGridPattern(GameObject routeGO, Vector3 center, float radius, int count, List<Transform> waypoints)
+        {
+            int gridSize = Mathf.CeilToInt(Mathf.Sqrt(count - 1));
+            float spacing = (radius * 2) / gridSize;
+
+            int current = 1; // Start at 1 since we already added the center point
+            for (int x = 0; x < gridSize && current < count; x++)
+            {
+                for (int z = 0; z < gridSize && current < count; z++)
+                {
+                    Vector3 waypointPos = center + new Vector3(
+                        (x * spacing) - (radius * 0.9f),
+                        0,
+                        (z * spacing) - (radius * 0.9f)
+                    );
+
+                    CreateValidWaypoint(routeGO, waypointPos, current, center.y, waypoints);
+                    current++;
+                }
+            }
+        }
+
+        // Generate waypoints in a zigzag pattern
+        private void GenerateZigzagPattern(GameObject routeGO, Vector3 center, float radius, int count, List<Transform> waypoints)
+        {
+            float segmentLength = (2 * radius) / ((count - 1) / 2);
+
+            for (int i = 1; i < count; i++)
+            {
+                float xOffset = ((i % 2 == 0) ? -1 : 1) * (radius * 0.8f);
+                float zOffset = ((i / 2) * segmentLength) - radius;
+
+                Vector3 waypointPos = center + new Vector3(xOffset, 0, zOffset);
+                CreateValidWaypoint(routeGO, waypointPos, i, center.y, waypoints);
+            }
+        }
+
+        // Generate waypoints in a star pattern
+        private void GenerateStarPattern(GameObject routeGO, Vector3 center, float radius, int count, List<Transform> waypoints)
+        {
+            int points = Mathf.Min(count - 1, 8); // Max 8 points in star
+            float innerRadius = radius * 0.4f;
+
+            for (int i = 0; i < points; i++)
+            {
+                // Outer point
+                float angle = i * (2 * Mathf.PI / points);
+                Vector3 outerPos = center + new Vector3(
+                    Mathf.Cos(angle) * radius,
+                    0,
+                    Mathf.Sin(angle) * radius
+                );
+                CreateValidWaypoint(routeGO, outerPos, i * 2 + 1, center.y, waypoints);
+
+                // Inner point (if we have enough waypoints)
+                if ((i * 2 + 2) < count)
+                {
+                    float innerAngle = (i + 0.5f) * (2 * Mathf.PI / points);
+                    Vector3 innerPos = center + new Vector3(
+                        Mathf.Cos(innerAngle) * innerRadius,
+                        0,
+                        Mathf.Sin(innerAngle) * innerRadius
+                    );
+                    CreateValidWaypoint(routeGO, innerPos, i * 2 + 2, center.y, waypoints);
+                }
+            }
+        }
+
+        // Generate waypoints in a random pattern
+        private void GenerateRandomPattern(GameObject routeGO, Vector3 center, float radius, int count, List<Transform> waypoints)
+        {
+            for (int i = 1; i < count; i++)
+            {
+                float angle = UnityEngine.Random.Range(0f, 2 * Mathf.PI);
+                float distance = UnityEngine.Random.Range(radius * 0.3f, radius);
+
+                Vector3 waypointPos = center + new Vector3(
+                    Mathf.Cos(angle) * distance,
+                    0,
+                    Mathf.Sin(angle) * distance
+                );
+
+                CreateValidWaypoint(routeGO, waypointPos, i, center.y, waypoints);
+            }
+        }
+
+        // Helper method to create a valid waypoint with NavMesh sampling
+        private void CreateValidWaypoint(GameObject routeGO, Vector3 position, int index, float defaultY, List<Transform> waypoints)
+        {
+            // Try to find valid NavMesh position
+            NavMeshHit hit;
+            Vector3 finalPosition = position;
+            bool foundValidPosition = false;
+
+            // Try up to 5 positions with increasing search radius
+            for (int attempt = 0; attempt < 5; attempt++)
+            {
+                float searchRadius = 2f + (attempt * 2f); // 2m, 4m, 6m, 8m, 10m
+                if (NavMesh.SamplePosition(position, out hit, searchRadius, NavMesh.AllAreas))
+                {
+                    // Verify the position is actually walkable and not on edges
+                    NavMeshPath path = new NavMeshPath();
+                    Vector3 testPos1 = hit.position + new Vector3(1, 0, 0);
+                    Vector3 testPos2 = hit.position + new Vector3(-1, 0, 0);
+                    Vector3 testPos3 = hit.position + new Vector3(0, 0, 1);
+                    Vector3 testPos4 = hit.position + new Vector3(0, 0, -1);
+
+                    // Test if we can navigate in at least 3 directions from this point
+                    int validDirections = 0;
+                    NavMeshHit testHit;
+
+                    if (NavMesh.SamplePosition(testPos1, out testHit, 2f, NavMesh.AllAreas)) validDirections++;
+                    if (NavMesh.SamplePosition(testPos2, out testHit, 2f, NavMesh.AllAreas)) validDirections++;
+                    if (NavMesh.SamplePosition(testPos3, out testHit, 2f, NavMesh.AllAreas)) validDirections++;
+                    if (NavMesh.SamplePosition(testPos4, out testHit, 2f, NavMesh.AllAreas)) validDirections++;
+
+                    // If we can move in at least 3 directions, this should be a safe position
+                    if (validDirections >= 3)
+                    {
+                        finalPosition = hit.position;
+                        finalPosition.y += _waypointHeightOffset; // Add a small height offset
+                        foundValidPosition = true;
+                        break;
+                    }
+                }
+            }
+
+            // Fallback if we couldn't find a valid position
+            if (!foundValidPosition)
+            {
+                finalPosition = position;
+                finalPosition.y = defaultY + _waypointHeightOffset;
+
+                // Log warning for development purposes
+                if (_enableDistrictDebugLogs)
+                {
+                    _core.LoggerInstance.Msg($"Warning: Could not find valid NavMesh position for waypoint {index}, using fallback");
+                }
+            }
+
+            var waypointGO = new GameObject($"Waypoint_{index}");
+            waypointGO.transform.position = finalPosition;
+            waypointGO.transform.SetParent(routeGO.transform);
+            waypoints.Add(waypointGO.transform);
         }
 
         // Modified for improved memory management and better cleanup
@@ -1718,6 +2191,10 @@ namespace LawEnforcementEnhancementMod
 
                 // Remove from active officers
                 _activeOfficers.Remove(officer);
+
+                // Remove from stuck tracking
+                _lastOfficerPositions.Remove(officer);
+                _officerStuckCounter.Remove(officer);
 
                 // Instead of destroying, try to add to pool
                 if (_officerPool.Count < MAX_POOLED_OFFICERS && officer.gameObject != null)
@@ -1901,6 +2378,10 @@ namespace LawEnforcementEnhancementMod
                             }
                             _officerRouteNames.Remove(officer);
                         }
+
+                        // Also clean up stuck tracking
+                        _lastOfficerPositions.Remove(officer);
+                        _officerStuckCounter.Remove(officer);
                     }
 
                     _activeOfficers.RemoveAt(i);
@@ -2288,6 +2769,8 @@ namespace LawEnforcementEnhancementMod
                 // Clear all dictionaries and lists
                 _activeOfficers.Clear();
                 _officerRouteNames.Clear();
+                _lastOfficerPositions.Clear();
+                _officerStuckCounter.Clear();
 
                 foreach (var district in _districts)
                 {
